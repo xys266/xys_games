@@ -190,7 +190,10 @@ html, body {
 <canvas id="stars-canvas"></canvas>
 <canvas id="fireworks-canvas" style="position:fixed;inset:0;z-index:500;pointer-events:none;"></canvas>
 
-<audio id="bgm" src="xys266.m4a" loop preload="auto"></audio>
+<audio id="bgm" loop preload="auto">
+  <source src="xys266.m4a" type="audio/mp4">
+  <source src="xys266.mp3" type="audio/mpeg">
+</audio>
 
 <div id="app">
   <div id="hdr">
