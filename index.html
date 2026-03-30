@@ -29,11 +29,7 @@ html, body {
   height:34px; flex-shrink:0;
 }
 #score { font-size:14px; color:#7ab3ff; font-weight:700; }
-#sel-hint {
-  font-size:13px; font-weight:700; color:#ffd700;
-  min-width:80px; text-align:center;
-  transition:color .15s;
-}
+#sel-hint { display:none; }
 #btn-new {
   padding:5px 13px;
   background:linear-gradient(135deg,#e94560,#b0294a);
@@ -41,6 +37,15 @@ html, body {
   border-radius:14px; cursor:pointer;
   box-shadow:0 2px 8px rgba(233,69,96,.4);
 }
+#btn-music {
+  padding:5px 10px;
+  background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.18);
+  color:#fff; font-size:15px;
+  border-radius:14px; cursor:pointer;
+  transition:background .15s;
+}
+#btn-music:hover { background:rgba(255,255,255,.18); }
 
 /* ── Game row ── */
 #game-row { display:flex; flex:1; min-height:0; }
@@ -175,16 +180,23 @@ html, body {
   from { transform:scale(1); }
   to   { transform:scale(1.08); }
 }
+
+/* ── Center milestone messages ── */
+/* (created dynamically and appended to body) */
 </style>
 </head>
 <body>
 
 <canvas id="stars-canvas"></canvas>
+<canvas id="fireworks-canvas" style="position:fixed;inset:0;z-index:500;pointer-events:none;"></canvas>
+
+<audio id="bgm" src="xys266.m4a" loop preload="auto"></audio>
 
 <div id="app">
   <div id="hdr">
     <span id="score">消除: 0 格</span>
     <span id="sel-hint"></span>
+    <button id="btn-music" onclick="toggleMusic()" title="背景音乐">🎵</button>
     <button id="btn-new" onclick="startGame()">重新开始</button>
   </div>
 
@@ -294,6 +306,89 @@ let cellEls, clearedCount;
 let dragging, selStart, selEnd;
 
 /* ════════════════════════════════════
+   Audio — sound effects & BGM
+════════════════════════════════════ */
+let audioCtx = null;
+let bgmOn    = true;
+
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+// Pleasant ascending chime when sum = 10
+function playSuccess() {
+  try {
+    const ctx = getAudioCtx();
+    [523.25, 659.25, 783.99, 1046.5].forEach((freq, i) => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      const t = ctx.currentTime + i * 0.075;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.26, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+      osc.start(t);
+      osc.stop(t + 0.6);
+    });
+  } catch(e) {}
+}
+
+// Short buzz when selection is wrong
+function playError() {
+  try {
+    const ctx = getAudioCtx();
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(210, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(75, ctx.currentTime + 0.28);
+    gain.gain.setValueAtTime(0.22, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.32);
+  } catch(e) {}
+}
+
+function startBgm() {
+  if (!bgmOn) return;
+  const bgm = document.getElementById('bgm');
+  if (bgm) bgm.play().catch(() => {});
+}
+
+// Autoplay on first user interaction (bypasses browser autoplay policy)
+function setupAutoplay() {
+  const unlock = () => {
+    startBgm();
+    document.removeEventListener('click',      unlock);
+    document.removeEventListener('touchstart', unlock);
+    document.removeEventListener('keydown',    unlock);
+  };
+  document.addEventListener('click',      unlock, { once: true });
+  document.addEventListener('touchstart', unlock, { once: true });
+  document.addEventListener('keydown',    unlock, { once: true });
+}
+
+function toggleMusic() {
+  bgmOn = !bgmOn;
+  const bgm = document.getElementById('bgm');
+  const btn = document.getElementById('btn-music');
+  btn.textContent = bgmOn ? '🎵' : '🔇';
+  if (bgm) {
+    if (bgmOn) { bgm.play().catch(() => {}); }
+    else        { bgm.pause(); }
+  }
+  // Unlock AudioContext on first interaction
+  getAudioCtx();
+}
+
+/* ════════════════════════════════════
    Stars background
 ════════════════════════════════════ */
 const sc = document.getElementById('stars-canvas');
@@ -350,26 +445,53 @@ window.addEventListener('resize', calcCellSize);
 ════════════════════════════════════ */
 function ri(n) { return Math.floor(Math.random() * n); }
 
-function makeSolvableNums(n) {
-  // Generate n integers in [1,9] that sum to exactly 10
+function makeSolvableNums(n, maxOnes) {
+  // Generate n integers in [1,9] that sum to exactly 10.
+  // maxOnes caps how many 1s this group may contain.
+  // Mathematical lower bound: to avoid 1s use 2 for non-ones → minOnes = max(0, 2n-10)
   if (n < 2 || n > 10) return null;
-  const a = Array(n).fill(1);
-  let rem = 10 - n;
-  // distribute remaining points randomly
-  for (let t = 0; t < 9999 && rem > 0; t++) {
-    const i = ri(n);
-    if (a[i] < 9) { a[i]++; rem--; }
+  const minOnes = Math.max(0, 2 * n - 10);
+  if (maxOnes !== undefined && minOnes > maxOnes) return null;
+  const limit = (maxOnes !== undefined) ? maxOnes : n;
+
+  for (let attempt = 0; attempt < 500; attempt++) {
+    const arr = [];
+    let remaining = 10;
+    let onesUsed  = 0;
+    let ok        = true;
+
+    for (let i = 0; i < n - 1; i++) {
+      const spotsLeft = n - 1 - i;
+      const minV = (onesUsed >= limit) ? 2 : 1;
+      const maxV = Math.min(9, remaining - spotsLeft);
+      if (maxV < minV) { ok = false; break; }
+      const val = minV + ri(maxV - minV + 1);
+      arr.push(val);
+      if (val === 1) onesUsed++;
+      remaining -= val;
+    }
+    if (!ok) continue;
+
+    const last = remaining;
+    if (last < 1 || last > 9) continue;
+    if (last === 1 && onesUsed >= limit) continue;
+    arr.push(last);
+
+    // Fisher-Yates shuffle
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = ri(i + 1);
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
   }
-  if (rem !== 0) return null;
-  // Fisher-Yates shuffle
-  for (let i = n - 1; i > 0; i--) {
-    const j = ri(i + 1);
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
+  return null;
 }
 
 function generateGrid() {
+  const TOTAL_CELLS = ROWS * COLS;
+  const MAX_ONES    = Math.floor(TOTAL_CELLS * 0.10);  // ≤ 10 % of the grid
+  let   onesCount   = 0;
+
   const g    = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
   const used = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
   let usedCount = 0;
@@ -391,8 +513,12 @@ function generateGrid() {
         if (used[r+dr][c+dc]) { ok = false; break outer; }
     if (!ok) continue;
 
-    const nums = makeSolvableNums(n);
+    const onesLeft = MAX_ONES - onesCount;
+    const nums = makeSolvableNums(n, onesLeft);
     if (!nums) continue;
+
+    const groupOnes = nums.filter(x => x === 1).length;
+    onesCount += groupOnes;
 
     let idx = 0;
     for (let dr = 0; dr < h; dr++)
@@ -403,10 +529,18 @@ function generateGrid() {
       }
   }
 
-  // Fill any uncovered cells with random numbers
+  // Fill any uncovered cells — avoid 1s once the budget is exhausted
   for (let r = 0; r < ROWS; r++)
     for (let c = 0; c < COLS; c++)
-      if (!used[r][c]) g[r][c] = ri(9) + 1;
+      if (!used[r][c]) {
+        if (onesCount < MAX_ONES) {
+          const v = ri(9) + 1;
+          g[r][c] = v;
+          if (v === 1) onesCount++;
+        } else {
+          g[r][c] = ri(8) + 2;   // 2–9 only
+        }
+      }
 
   return g;
 }
@@ -428,6 +562,9 @@ function startGame() {
   document.getElementById('end-overlay').style.display = 'none';
   document.getElementById('victory').style.display     = 'none';
   stopDanmaku();
+  startBgm();
+  const cm = document.getElementById('center-msg');
+  if (cm) { cm.style.transition = 'none'; cm.style.opacity = '0'; cm.textContent = ''; }
 
   const ex = document.getElementById('exhaust');
   ex.style.transition = ''; ex.style.opacity = '0';
@@ -570,12 +707,10 @@ function refreshSelection() {
       }
     }
 
-  // Show sum and highlight green if == 10
+  // Highlight green if sum == 10
   const hint = document.getElementById('sel-hint');
   if (rect) {
     if (sum === 10) {
-      hint.textContent = `和 = ${sum} ✓`;
-      hint.style.color = '#44ee88';
       for (let r = rect.r1; r <= rect.r2; r++)
         for (let c = rect.c1; c <= rect.c2; c++) {
           if (!clearedData[r][c]) {
@@ -584,7 +719,6 @@ function refreshSelection() {
           }
         }
     } else {
-      hint.textContent = `和 = ${sum}`;
       hint.style.color = '#ffd700';
     }
   } else {
@@ -629,7 +763,9 @@ function commitSelection() {
     }
     updateScore();
     checkAllCleared();
+    playSuccess();
   } else {
+    playError();
     for (let r = rect.r1; r <= rect.r2; r++)
       for (let c = rect.c1; c <= rect.c2; c++) {
         if (!clearedData[r][c]) {
@@ -670,9 +806,96 @@ function updateFuelBar() {
   }
 }
 
+function launchFireworks(duration) {
+  const canvas = document.getElementById('fireworks-canvas');
+  const ctx    = canvas.getContext('2d');
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+
+  let particles = [];
+  const endTime = Date.now() + duration;
+  let animId;
+
+  const PALETTE = [
+    '#ff69b4','#ffd700','#00ffcc','#ff6b6b',
+    '#a29bfe','#55efc4','#ff9f43','#fd79a8',
+  ];
+
+  function burst(x, y) {
+    const color = PALETTE[Math.floor(Math.random() * PALETTE.length)];
+    const count = 90 + Math.floor(Math.random() * 40);
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.3;
+      const speed = Math.random() * 5 + 2;
+      particles.push({
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 1.5,
+        color,
+        alpha: 1,
+        r: Math.random() * 3 + 1,
+        decay: Math.random() * 0.012 + 0.012,
+        gravity: 0.09,
+      });
+    }
+  }
+
+  // Initial volley
+  const cols = [0.2, 0.4, 0.6, 0.8];
+  cols.forEach((cx, i) => {
+    setTimeout(() => burst(
+      canvas.width * cx,
+      canvas.height * (0.25 + Math.random() * 0.3)
+    ), i * 220);
+  });
+
+  function tick() {
+    const now = Date.now();
+    ctx.fillStyle = 'rgba(3,6,16,0.18)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Random new bursts while time remains
+    if (now < endTime && Math.random() < 0.055) {
+      burst(
+        Math.random() * canvas.width * 0.8 + canvas.width * 0.1,
+        Math.random() * canvas.height * 0.55 + canvas.height * 0.05
+      );
+    }
+
+    particles = particles.filter(p => p.alpha > 0.03);
+    for (const p of particles) {
+      p.x  += p.vx;
+      p.y  += p.vy;
+      p.vy += p.gravity;
+      p.vx *= 0.97;
+      p.alpha -= p.decay;
+
+      ctx.save();
+      ctx.globalAlpha = p.alpha;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = p.color;
+      ctx.shadowBlur  = 6;
+      ctx.shadowColor = p.color;
+      ctx.fill();
+      ctx.restore();
+    }
+
+    if (now < endTime + 2000) {
+      animId = requestAnimationFrame(tick);
+    } else {
+      cancelAnimationFrame(animId);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+  }
+
+  tick();
+}
+
 /* ════════════════════════════════════
    Check full clear
 ════════════════════════════════════ */
+
 function checkAllCleared() {
   if (clearedCount < ROWS * COLS) return;
   gameActive = false;
@@ -680,6 +903,10 @@ function checkAllCleared() {
   setTimeout(() => {
     document.getElementById('victory').style.display = 'flex';
     fireDanmaku(200);
+    if (clearedCount >= 150) {
+      launchFireworks(13000);
+      showCenterMessages(SPECIAL_MSGS);
+    }
   }, 500);
 }
 
@@ -700,16 +927,90 @@ function triggerLaunch() {
 
   setTimeout(() => fireDanmaku(140), 700);
 
+  const OVERLAY_DELAY = clearedCount >= 150
+    ? 800 + SPECIAL_MSGS.length * (380 + 1100 + 350 + 40) + 600
+    : 5500;
+
+  if (clearedCount >= 150) {
+    setTimeout(() => {
+      launchFireworks(SPECIAL_MSGS.length * (380 + 1100 + 350 + 40) + 2000);
+      showCenterMessages(SPECIAL_MSGS);
+    }, 800);
+  }
+
   setTimeout(() => {
     document.getElementById('end-score').textContent =
       `消除了 ${clearedCount} / ${ROWS * COLS} 个格子`;
     document.getElementById('end-overlay').style.display = 'flex';
-  }, 5500);
+  }, OVERLAY_DELAY);
 }
 
 /* ════════════════════════════════════
    Danmaku
 ════════════════════════════════════ */
+const SPECIAL_MSGS = [
+  '小莹神要好好吃饭！',
+  '小莹神要好好睡觉！',
+  '小莹神要好好爱自己！',
+  '小莹神要照顾好自己！',
+  '要自信！！！',
+  '你知道你很棒，对吧！',
+  '你是我的宝子！！！',
+  '66最爱你了 ❤️'
+];
+
+const SPECIAL_COLORS = [
+  '#ff69b4','#ffd700','#55efc4',
+  '#ff9f43','#a29bfe','#fd79a8','#ff6b6b',
+];
+
+function showCenterMessages(msgs) {
+  const IN_MS   = 400;
+  const HOLD_MS = 1000;
+  const OUT_MS  = 400;
+  const PER     = IN_MS + HOLD_MS + OUT_MS;
+
+  msgs.forEach((msg, idx) => {
+    setTimeout(() => {
+      const color = SPECIAL_COLORS[idx % SPECIAL_COLORS.length];
+      const div   = document.createElement('div');
+      div.textContent = msg;
+      // Appended directly to body — outside #app's stacking context
+      Object.assign(div.style, {
+        position      : 'fixed',
+        top           : '50%',
+        left          : '50%',
+        transform     : 'translate(-50%,-50%) scale(0.3) rotate(-12deg)',
+        zIndex        : '9999',
+        fontSize      : '44px',
+        fontWeight    : '900',
+        color         : color,
+        textShadow    : `0 0 20px ${color},0 0 50px ${color},0 0 90px ${color}`,
+        letterSpacing : '3px',
+        whiteSpace    : 'nowrap',
+        pointerEvents : 'none',
+        opacity       : '0',
+        transition    : `opacity ${IN_MS}ms ease, transform ${IN_MS + 60}ms cubic-bezier(.22,1,.36,1)`,
+      });
+      document.body.appendChild(div);
+
+      // Two rAF frames to flush the initial state, then animate in
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        div.style.opacity   = '1';
+        div.style.transform = 'translate(-50%,-50%) scale(1) rotate(0deg)';
+      }));
+
+      // Animate out
+      setTimeout(() => {
+        div.style.transition = `opacity ${OUT_MS}ms ease, transform ${OUT_MS}ms ease`;
+        div.style.opacity    = '0';
+        div.style.transform  = 'translate(-50%,-50%) scale(1.35) rotate(6deg)';
+        setTimeout(() => div.remove(), OUT_MS + 50);
+      }, IN_MS + HOLD_MS);
+
+    }, idx * PER);
+  });
+}
 const DM_MSGS = [
   '小莹神最棒了！','小莹神超级厉害！','小莹神是最可爱的宝贝！',
   '超爱小莹神！','小莹神无敌！','全宇宙最棒的小莹神！',
@@ -722,7 +1023,8 @@ const DM_MSGS = [
   '小莹神我爱你！💕','小莹神好厉害哦！','小莹神是公主！👑',
   '给小莹神比心！🫶','小莹神最闪亮！','小莹神美美的！',
   '小莹神是天上的星星！','小莹神开心每一天！','小莹神好温柔！',
-  '小莹神最最最棒！','爱小莹神❤️‍🔥','小莹神超可爱！', '66超爱小莹神', '好想你好想你', '小莹神最美',
+  '小莹神最最最棒！','爱小莹神❤️‍🔥','小莹神超可爱！',
+  '66超爱小莹神', '好想你好想你', '小莹神最美！',
 ];
 const DM_COLORS = [
   '#ff69b4','#ff6b6b','#ffd700','#00fff0','#ff9f43',
@@ -773,10 +1075,41 @@ function fireDanmaku(total) {
   spawn();
 }
 
+function fireFixedDanmaku(msgs) {
+  const layer  = document.getElementById('dm-layer');
+  const colors = ['#ff69b4', '#ffd700', '#55efc4'];
+  const tops   = [15, 45, 72];
+  // Launch 3 rounds so messages keep flying across the screen
+  const ROUNDS = 3;
+  for (let round = 0; round < ROUNDS; round++) {
+    msgs.forEach((msg, i) => {
+      const delay = round * 4200 + i * 900;
+      setTimeout(() => {
+        const el  = document.createElement('div');
+        const dur = 7;
+        el.className   = 'dm';
+        el.textContent = msg;
+        el.style.cssText = [
+          `top:${tops[i]}%`,
+          `color:${colors[i]}`,
+          `font-size:32px`,
+          `font-weight:900`,
+          `text-shadow:0 0 20px ${colors[i]},0 0 40px ${colors[i]},1px 1px 4px #000`,
+          `animation-duration:${dur}s`,
+          `animation-delay:0s`,
+        ].join(';');
+        layer.appendChild(el);
+        setTimeout(() => el.remove(), (dur + 0.5) * 1000);
+      }, delay);
+    });
+  }
+}
+
 /* ════════════════════════════════════
    Boot
 ════════════════════════════════════ */
 startGame();
+setupAutoplay();
 </script>
 </body>
 </html>
