@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>消十游戏 🚀</title>
+<style>
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+:root { --cs:32px; --gap:2px; }
+
+html, body {
+  width:100%; height:100%;
+  overflow:hidden;
+  background:#030610;
+  font-family:-apple-system,'Segoe UI',Arial,sans-serif;
+}
+#stars-canvas { position:fixed; inset:0; z-index:0; pointer-events:none; }
+
+#app {
+  position:relative; z-index:1;
+  width:100%; height:100%;
+  display:flex; flex-direction:column;
+  padding:6px; gap:5px;
+}
+
+/* ── Header ── */
+#hdr {
+  display:flex; justify-content:space-between; align-items:center;
+  height:34px; flex-shrink:0;
+}
+#score { font-size:14px; color:#7ab3ff; font-weight:700; }
+#sel-hint {
+  font-size:13px; font-weight:700; color:#ffd700;
+  min-width:80px; text-align:center;
+  transition:color .15s;
+}
+#btn-new {
+  padding:5px 13px;
+  background:linear-gradient(135deg,#e94560,#b0294a);
+  border:none; color:#fff; font-size:12px; font-weight:700;
+  border-radius:14px; cursor:pointer;
+  box-shadow:0 2px 8px rgba(233,69,96,.4);
+}
+
+/* ── Game row ── */
+#game-row { display:flex; flex:1; min-height:0; }
+
+#grid-area {
+  flex:1; min-width:0;
+  display:flex; align-items:center; justify-content:center;
+}
+#grid {
+  display:grid;
+  grid-template-columns:repeat(10,var(--cs));
+  grid-template-rows:repeat(16,var(--cs));
+  gap:var(--gap);
+  touch-action:none;
+  user-select:none; -webkit-user-select:none;
+}
+
+/* ── Cells ── */
+.cell {
+  width:var(--cs); height:var(--cs);
+  border-radius:4px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:calc(var(--cs)*.44); font-weight:900;
+  background:#0b1230;
+  border:1px solid #162550;
+  cursor:pointer;
+  transition:background .12s, transform .1s, border-color .12s;
+}
+.n1{color:#82cfff} .n2{color:#3de87a} .n3{color:#c5f230}
+.n4{color:#ffe234} .n5{color:#ffbc00} .n6{color:#ff9a2e}
+.n7{color:#ff7040} .n8{color:#ff5080} .n9{color:#ee40ff}
+
+.cell.sel {
+  background:#1d4fcc; border-color:#5590ff;
+  transform:scale(.91); z-index:2;
+}
+.cell.sel-ok  { background:#1a5c30; border-color:#44ee78; transform:scale(.91); z-index:2; }
+.cell.cleared {
+  background:#020408; border-color:#06091a;
+  pointer-events:none; color:transparent;
+}
+.cell.pop  { animation:anim-pop  .42s ease forwards; }
+.cell.bad  { animation:anim-bad  .36s ease; }
+
+@keyframes anim-pop {
+  0%   { background:#0b3a22; transform:scale(1); }
+  45%  { background:#22bb55; transform:scale(1.22); color:#fff; }
+  100% { background:#020408; transform:scale(1); color:transparent; border-color:#06091a; }
+}
+@keyframes anim-bad {
+  0%,100% { transform:translateX(0); }
+  20%  { transform:translateX(-5px) rotate(-2deg); background:#5a0016; border-color:#dd2244; }
+  70%  { transform:translateX(5px)  rotate(2deg);  background:#5a0016; border-color:#dd2244; }
+}
+
+/* ── Rocket strip (above grid) ── */
+#rocket-strip {
+  display:flex; align-items:center; gap:6px;
+  flex-shrink:0; height:52px;
+  overflow:hidden;
+}
+#timer-txt {
+  font-size:13px; font-weight:700; color:#ffd700;
+  letter-spacing:.5px; white-space:nowrap;
+  text-shadow:0 0 8px rgba(255,215,0,.5);
+  width:30px; text-align:center; flex-shrink:0;
+}
+#rocket-wrap {
+  flex:1; height:100%;
+  display:flex; align-items:center;
+  overflow:hidden;
+}
+#rsvg { width:100%; height:46px; }
+
+/* ── Danmaku ── */
+#dm-layer {
+  position:fixed; inset:0; z-index:800;
+  pointer-events:none; overflow:hidden;
+}
+.dm {
+  position:absolute; white-space:nowrap; font-weight:900;
+  animation:dm-fly linear forwards;
+}
+@keyframes dm-fly {
+  from { transform:translateX(110vw); }
+  to   { transform:translateX(calc(-110vw - 100%)); }
+}
+
+/* ── End overlay ── */
+#end-overlay {
+  display:none; position:fixed; inset:0; z-index:900;
+  background:rgba(0,0,0,.78);
+  align-items:center; justify-content:center;
+}
+#end-box {
+  background:radial-gradient(ellipse at 30% 0%,#1c0e4e,#060818);
+  border:2px solid #ffd700;
+  border-radius:22px;
+  padding:28px 36px;
+  text-align:center; color:#fff;
+  box-shadow:0 0 60px rgba(255,215,0,.22), inset 0 0 30px rgba(80,40,200,.1);
+  animation:modal-in .5s ease;
+}
+@keyframes modal-in {
+  from { transform:scale(.6) rotate(-8deg); opacity:0; }
+  to   { transform:scale(1) rotate(0); opacity:1; }
+}
+#end-box .ico    { font-size:52px; line-height:1; }
+#end-box h2      { font-size:24px; color:#ffd700; margin:8px 0 4px; text-shadow:0 0 18px rgba(255,215,0,.7); }
+#end-box .sub    { font-size:14px; color:#88bbff; margin-bottom:20px; }
+#end-box button  {
+  padding:11px 30px;
+  background:linear-gradient(135deg,#e94560,#b0294a);
+  border:none; color:#fff; font-size:16px; font-weight:700;
+  border-radius:22px; cursor:pointer;
+  box-shadow:0 4px 18px rgba(233,69,96,.5);
+}
+
+/* ── Victory banner (all cleared) ── */
+#victory {
+  display:none; position:fixed; inset:0; z-index:950;
+  align-items:center; justify-content:center;
+  background:rgba(0,0,0,.6);
+}
+#vic-box {
+  font-size:30px; color:#ffd700; font-weight:900;
+  text-shadow:0 0 30px #ffd700,0 0 60px #ff8800;
+  animation:vic-pulse 1s ease infinite alternate;
+  text-align:center;
+}
+@keyframes vic-pulse {
+  from { transform:scale(1); }
+  to   { transform:scale(1.08); }
+}
+</style>
+</head>
+<body>
+
+<canvas id="stars-canvas"></canvas>
+
+<div id="app">
+  <div id="hdr">
+    <span id="score">消除: 0 格</span>
+    <span id="sel-hint"></span>
+    <button id="btn-new" onclick="startGame()">重新开始</button>
+  </div>
+
+  <div id="rocket-strip">
+    <div id="timer-txt">1:30</div>
+    <div id="rocket-wrap">
+      <!-- Horizontal rocket SVG — nose points right, fuel fills left→right -->
+      <svg id="rsvg" viewBox="0 0 300 46" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <!-- Fuel gradient: warm yellow on left, hot red on right -->
+          <linearGradient id="gFuel" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%"   stop-color="#ffee00"/>
+            <stop offset="40%"  stop-color="#ff9900"/>
+            <stop offset="75%"  stop-color="#ff4400"/>
+            <stop offset="100%" stop-color="#cc0000"/>
+          </linearGradient>
+          <linearGradient id="gBody" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"   stop-color="#99aadd"/>
+            <stop offset="50%"  stop-color="#6677aa"/>
+            <stop offset="100%" stop-color="#99aadd"/>
+          </linearGradient>
+          <linearGradient id="gNose" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%"   stop-color="#8899cc"/>
+            <stop offset="100%" stop-color="#c8d8f0"/>
+          </linearGradient>
+          <!-- Clip fuel to body rect -->
+          <clipPath id="cpBody">
+            <rect x="42" y="13" width="198" height="20" rx="4"/>
+          </clipPath>
+        </defs>
+
+        <!-- Exhaust flame — left side, points left -->
+        <g id="exhaust" opacity="0">
+          <ellipse cx="22" cy="23" rx="20" ry="9"   fill="#ff3d00" opacity=".88"/>
+          <ellipse cx="18" cy="23" rx="14" ry="6"   fill="#ff8800" opacity=".93"/>
+          <ellipse cx="14" cy="23" rx="9"  ry="4"   fill="#ffee00"/>
+          <ellipse cx="11" cy="23" rx="5"  ry="2.5" fill="#fff" opacity=".82"/>
+        </g>
+
+        <!-- Nozzle (left end of body) -->
+        <path d="M42,17 L42,29 L30,33 L30,13 Z" fill="#556688" stroke="#3344aa" stroke-width="1"/>
+
+        <!-- Top fin (near nozzle) -->
+        <path d="M42,13 L42,20 L26,5  Z" fill="url(#gBody)" stroke="#4455aa" stroke-width="1"/>
+        <!-- Bottom fin -->
+        <path d="M42,33 L42,26 L26,41 Z" fill="url(#gBody)" stroke="#4455aa" stroke-width="1"/>
+
+        <!-- Body background -->
+        <rect x="42" y="13" width="198" height="20" rx="4" fill="#060d20"/>
+
+        <!-- Fuel fill (grows left→right as time passes) -->
+        <rect id="fuel-bar" x="42" y="13" width="0" height="20" rx="4"
+              fill="url(#gFuel)" clip-path="url(#cpBody)"/>
+
+        <!-- Body border on top -->
+        <rect x="42" y="13" width="198" height="20" rx="4"
+              fill="none" stroke="url(#gBody)" stroke-width="1.5"/>
+
+        <!-- Tick marks (vertical lines inside body) -->
+        <line x1="108" y1="15" x2="108" y2="31" stroke="#1a2650" stroke-width="0.8"/>
+        <line x1="174" y1="15" x2="174" y2="31" stroke="#1a2650" stroke-width="0.8"/>
+        <line x1="207" y1="15" x2="207" y2="31" stroke="#1a2650" stroke-width="0.8"/>
+
+        <!-- Window (near nose) -->
+        <circle cx="218" cy="23" r="7.5" fill="#07102a" stroke="#88aadd" stroke-width="1.2"/>
+        <circle cx="218" cy="23" r="5"   fill="#153a99" opacity=".85"/>
+        <ellipse cx="215.5" cy="20.5" rx="1.8" ry="1.2" fill="rgba(255,255,255,.48)" transform="rotate(-20 215.5 20.5)"/>
+
+        <!-- Nose cone (right end) -->
+        <path d="M240,13 L240,33 L282,23 Z" fill="url(#gNose)"/>
+        <!-- Nose highlight -->
+        <path d="M240,13 L282,23 L240,23 Z" fill="rgba(255,255,255,.12)"/>
+      </svg>
+    </div>
+  </div>
+
+  <div id="game-row">
+    <div id="grid-area">
+      <div id="grid"></div>
+    </div>
+  </div>
+
+<div id="dm-layer"></div>
+
+<div id="end-overlay">
+  <div id="end-box">
+    <div class="ico">🚀</div>
+    <h2>火箭发射啦！</h2>
+    <p class="sub" id="end-score"></p>
+    <button onclick="startGame()">再来一局！</button>
+  </div>
+</div>
+
+<div id="victory">
+  <div id="vic-box">
+    🎉 完美消除！<br>小莹神天下第一！🎉
+  </div>
+</div>
+
+<script>
+'use strict';
+
+const ROWS = 16, COLS = 10, TOTAL_SEC = 90;
+
+let gridData, clearedData, gameActive, timeLeft, timerId;
+let cellEls, clearedCount;
+let dragging, selStart, selEnd;
+
+/* ════════════════════════════════════
+   Stars background
+════════════════════════════════════ */
+const sc = document.getElementById('stars-canvas');
+const sx = sc.getContext('2d');
+let stars = [];
+
+function initStars() {
+  sc.width  = window.innerWidth;
+  sc.height = window.innerHeight;
+  stars = Array.from({ length: 170 }, () => ({
+    x:  Math.random() * sc.width,
+    y:  Math.random() * sc.height,
+    r:  Math.random() * 1.4 + 0.2,
+    ph: Math.random() * Math.PI * 2,
+    sp: Math.random() * 0.007 + 0.002,
+  }));
+}
+
+function drawStars() {
+  sx.clearRect(0, 0, sc.width, sc.height);
+  for (const s of stars) {
+    s.ph += s.sp;
+    const a = (Math.sin(s.ph) + 1) / 2 * 0.75 + 0.1;
+    sx.beginPath();
+    sx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    sx.fillStyle = `rgba(200,220,255,${a.toFixed(2)})`;
+    sx.fill();
+  }
+  requestAnimationFrame(drawStars);
+}
+
+initStars();
+drawStars();
+window.addEventListener('resize', initStars);
+
+/* ════════════════════════════════════
+   Responsive cell sizing
+════════════════════════════════════ */
+function calcCellSize() {
+  const padH = 12, padV = 12, headerH = 39, rocketH = 57, gapV = 5 * 2;
+  const availW = window.innerWidth  - padH;
+  const availH = window.innerHeight - headerH - rocketH - padV - gapV;
+  const cw = Math.floor((availW - (COLS - 1) * 2) / COLS);
+  const ch = Math.floor((availH - (ROWS - 1) * 2) / ROWS);
+  const sz = Math.max(22, Math.min(cw, ch, 52));
+  document.documentElement.style.setProperty('--cs', sz + 'px');
+}
+
+calcCellSize();
+window.addEventListener('resize', calcCellSize);
+
+/* ════════════════════════════════════
+   Grid generation  (90 %+ solvable)
+════════════════════════════════════ */
+function ri(n) { return Math.floor(Math.random() * n); }
+
+function makeSolvableNums(n) {
+  // Generate n integers in [1,9] that sum to exactly 10
+  if (n < 2 || n > 10) return null;
+  const a = Array(n).fill(1);
+  let rem = 10 - n;
+  // distribute remaining points randomly
+  for (let t = 0; t < 9999 && rem > 0; t++) {
+    const i = ri(n);
+    if (a[i] < 9) { a[i]++; rem--; }
+  }
+  if (rem !== 0) return null;
+  // Fisher-Yates shuffle
+  for (let i = n - 1; i > 0; i--) {
+    const j = ri(i + 1);
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function generateGrid() {
+  const g    = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+  const used = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  let usedCount = 0;
+  const target = ROWS * COLS * 0.92;   // aim for 92 % pre-solved coverage
+
+  for (let tries = 0; tries < 5000 && usedCount < target; tries++) {
+    let h, w, n;
+    // rectangle height 1-3, width 1-5, total cells 2-10
+    do { h = ri(3) + 1; w = ri(5) + 1; n = h * w; } while (n < 2 || n > 10);
+    if (h > ROWS || w > COLS) continue;
+
+    const r = ri(ROWS - h + 1);
+    const c = ri(COLS - w + 1);
+
+    // Check all cells in region are free
+    let ok = true;
+    outer: for (let dr = 0; dr < h; dr++)
+      for (let dc = 0; dc < w; dc++)
+        if (used[r+dr][c+dc]) { ok = false; break outer; }
+    if (!ok) continue;
+
+    const nums = makeSolvableNums(n);
+    if (!nums) continue;
+
+    let idx = 0;
+    for (let dr = 0; dr < h; dr++)
+      for (let dc = 0; dc < w; dc++) {
+        g[r+dr][c+dc]    = nums[idx++];
+        used[r+dr][c+dc] = true;
+        usedCount++;
+      }
+  }
+
+  // Fill any uncovered cells with random numbers
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      if (!used[r][c]) g[r][c] = ri(9) + 1;
+
+  return g;
+}
+
+/* ════════════════════════════════════
+   Game start
+════════════════════════════════════ */
+function startGame() {
+  clearInterval(timerId);
+
+  gridData    = generateGrid();
+  clearedData = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  clearedCount = 0;
+  gameActive  = true;
+  timeLeft    = TOTAL_SEC;
+  dragging    = false;
+  selStart    = selEnd = null;
+
+  document.getElementById('end-overlay').style.display = 'none';
+  document.getElementById('victory').style.display     = 'none';
+  stopDanmaku();
+
+  const ex = document.getElementById('exhaust');
+  ex.style.transition = ''; ex.style.opacity = '0';
+  const rw = document.getElementById('rocket-wrap');
+  rw.style.transition = ''; rw.style.transform = '';
+  // Reset fuel bar width to 0
+  document.getElementById('fuel-bar').setAttribute('width', '0');
+
+  buildGrid();
+  updateScore();
+  updateTimerUI();
+  updateFuelBar();
+
+  timerId = setInterval(() => {
+    if (!gameActive) return;
+    timeLeft--;
+    updateTimerUI();
+    updateFuelBar();
+    if (timeLeft <= 0) { clearInterval(timerId); triggerLaunch(); }
+  }, 1000);
+}
+
+/* ════════════════════════════════════
+   Build grid DOM
+════════════════════════════════════ */
+function buildGrid() {
+  // Replace element to clear previous event listeners
+  const oldGrid = document.getElementById('grid');
+  const newGrid = document.createElement('div');
+  newGrid.id = 'grid';
+  oldGrid.parentNode.replaceChild(newGrid, oldGrid);
+
+  cellEls = [];
+  for (let r = 0; r < ROWS; r++) {
+    cellEls[r] = [];
+    for (let c = 0; c < COLS; c++) {
+      const el  = document.createElement('div');
+      const val = gridData[r][c];
+      el.className   = `cell n${val}`;
+      el.textContent = val;
+      el.dataset.r   = r;
+      el.dataset.c   = c;
+      newGrid.appendChild(el);
+      cellEls[r][c] = el;
+    }
+  }
+
+  newGrid.addEventListener('touchstart', onTouchStart, { passive: false });
+  newGrid.addEventListener('touchmove',  onTouchMove,  { passive: false });
+  newGrid.addEventListener('touchend',   onTouchEnd,   { passive: false });
+  newGrid.addEventListener('mousedown',  onMouseDown);
+  newGrid.addEventListener('mousemove',  onMouseMove);
+}
+
+// Global mouseup (handles release outside grid)
+document.addEventListener('mouseup', () => {
+  if (dragging) { dragging = false; commitSelection(); }
+});
+
+/* ════════════════════════════════════
+   Coordinate → cell
+════════════════════════════════════ */
+function pointToCell(x, y) {
+  const g    = document.getElementById('grid');
+  const rect = g.getBoundingClientRect();
+  const cs   = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--cs'));
+  const step = cs + 2;   // cell size + gap
+  const col  = Math.floor((x - rect.left) / step);
+  const row  = Math.floor((y - rect.top)  / step);
+  if (row < 0 || row >= ROWS || col < 0 || col >= COLS) return null;
+  return { r: row, c: col };
+}
+
+/* ════════════════════════════════════
+   Touch / Mouse handlers
+════════════════════════════════════ */
+function onTouchStart(e) {
+  e.preventDefault();
+  if (!gameActive) return;
+  const t    = e.touches[0];
+  const cell = pointToCell(t.clientX, t.clientY);
+  if (!cell) return;
+  dragging = true; selStart = selEnd = cell;
+  refreshSelection();
+}
+
+function onTouchMove(e) {
+  e.preventDefault();
+  if (!dragging) return;
+  const t    = e.touches[0];
+  const cell = pointToCell(t.clientX, t.clientY);
+  if (cell) { selEnd = cell; refreshSelection(); }
+}
+
+function onTouchEnd(e) {
+  e.preventDefault();
+  if (!dragging) return;
+  dragging = false;
+  commitSelection();
+}
+
+function onMouseDown(e) {
+  if (!gameActive) return;
+  const cell = pointToCell(e.clientX, e.clientY);
+  if (!cell) return;
+  dragging = true; selStart = selEnd = cell;
+  refreshSelection();
+}
+
+function onMouseMove(e) {
+  if (!dragging) return;
+  const cell = pointToCell(e.clientX, e.clientY);
+  if (cell) { selEnd = cell; refreshSelection(); }
+}
+
+/* ════════════════════════════════════
+   Selection logic
+════════════════════════════════════ */
+function getSelRect() {
+  if (!selStart || !selEnd) return null;
+  return {
+    r1: Math.min(selStart.r, selEnd.r), r2: Math.max(selStart.r, selEnd.r),
+    c1: Math.min(selStart.c, selEnd.c), c2: Math.max(selStart.c, selEnd.c),
+  };
+}
+
+function refreshSelection() {
+  const rect = getSelRect();
+  let sum = 0;
+
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++) {
+      const el   = cellEls[r][c];
+      const inSel = rect && r >= rect.r1 && r <= rect.r2 && c >= rect.c1 && c <= rect.c2;
+      el.classList.remove('sel', 'sel-ok');
+      if (clearedData[r][c]) continue;
+      if (inSel) {
+        sum += gridData[r][c];
+        el.classList.add('sel');
+      }
+    }
+
+  // Show sum and highlight green if == 10
+  const hint = document.getElementById('sel-hint');
+  if (rect) {
+    if (sum === 10) {
+      hint.textContent = `和 = ${sum} ✓`;
+      hint.style.color = '#44ee88';
+      for (let r = rect.r1; r <= rect.r2; r++)
+        for (let c = rect.c1; c <= rect.c2; c++) {
+          if (!clearedData[r][c]) {
+            cellEls[r][c].classList.remove('sel');
+            cellEls[r][c].classList.add('sel-ok');
+          }
+        }
+    } else {
+      hint.textContent = `和 = ${sum}`;
+      hint.style.color = '#ffd700';
+    }
+  } else {
+    hint.textContent = '';
+  }
+}
+
+function commitSelection() {
+  const rect = getSelRect();
+
+  // Remove all selection classes
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      cellEls[r][c].classList.remove('sel', 'sel-ok');
+  document.getElementById('sel-hint').textContent = '';
+  selStart = selEnd = null;
+
+  if (!rect) return;
+
+  let sum = 0, hasAny = false;
+  for (let r = rect.r1; r <= rect.r2; r++)
+    for (let c = rect.c1; c <= rect.c2; c++)
+      if (!clearedData[r][c]) { sum += gridData[r][c]; hasAny = true; }
+
+  if (!hasAny) return;
+
+  if (sum === 10) {
+    for (let r = rect.r1; r <= rect.r2; r++) {
+      for (let c = rect.c1; c <= rect.c2; c++) {
+        if (clearedData[r][c]) continue;
+        clearedData[r][c] = true;
+        clearedCount++;
+        const el = cellEls[r][c];
+        el.classList.add('pop');
+        // After pop animation completes, mark as cleared
+        setTimeout(() => {
+          el.classList.remove('pop');
+          el.classList.add('cleared');
+          el.textContent = '';
+        }, 420);
+      }
+    }
+    updateScore();
+    checkAllCleared();
+  } else {
+    for (let r = rect.r1; r <= rect.r2; r++)
+      for (let c = rect.c1; c <= rect.c2; c++) {
+        if (!clearedData[r][c]) {
+          const el = cellEls[r][c];
+          el.classList.add('bad');
+          setTimeout(() => el.classList.remove('bad'), 380);
+        }
+      }
+  }
+}
+
+/* ════════════════════════════════════
+   UI updates
+════════════════════════════════════ */
+function updateScore() {
+  document.getElementById('score').textContent = `消除: ${clearedCount} 格`;
+}
+
+function updateTimerUI() {
+  const m  = Math.floor(timeLeft / 60);
+  const s  = timeLeft % 60;
+  const el = document.getElementById('timer-txt');
+  el.textContent = `${m}:${String(s).padStart(2, '0')}`;
+  el.style.color = timeLeft <= 15 ? '#ff4444' : timeLeft <= 30 ? '#ff9940' : '#ffd700';
+}
+
+function updateFuelBar() {
+  const progress = (TOTAL_SEC - timeLeft) / TOTAL_SEC;   // 0 → 1
+  const W = 198;  // body width in SVG coords
+  const fillW = Math.round(W * progress);
+  const bar = document.getElementById('fuel-bar');
+  bar.setAttribute('width', fillW);
+
+  // Flicker exhaust in final 12 seconds
+  if (timeLeft <= 12 && timeLeft > 0) {
+    const ex = document.getElementById('exhaust');
+    ex.style.opacity = (0.25 + 0.4 * Math.abs(Math.sin(Date.now() / 90))).toFixed(2);
+  }
+}
+
+/* ════════════════════════════════════
+   Check full clear
+════════════════════════════════════ */
+function checkAllCleared() {
+  if (clearedCount < ROWS * COLS) return;
+  gameActive = false;
+  clearInterval(timerId);
+  setTimeout(() => {
+    document.getElementById('victory').style.display = 'flex';
+    fireDanmaku(200);
+  }, 500);
+}
+
+/* ════════════════════════════════════
+   Rocket launch + end
+════════════════════════════════════ */
+function triggerLaunch() {
+  gameActive = false;
+  const ex = document.getElementById('exhaust');
+  ex.style.transition = 'opacity .4s';
+  ex.style.opacity    = '1';
+
+  const rw = document.getElementById('rocket-wrap');
+  setTimeout(() => {
+    rw.style.transition = 'transform 1.9s cubic-bezier(.18,0,.35,1)';
+    rw.style.transform  = 'translateX(200vw)';
+  }, 250);
+
+  setTimeout(() => fireDanmaku(140), 700);
+
+  setTimeout(() => {
+    document.getElementById('end-score').textContent =
+      `消除了 ${clearedCount} / ${ROWS * COLS} 个格子`;
+    document.getElementById('end-overlay').style.display = 'flex';
+  }, 5500);
+}
+
+/* ════════════════════════════════════
+   Danmaku
+════════════════════════════════════ */
+const DM_MSGS = [
+  '小莹神最棒了！','小莹神超级厉害！','小莹神是最可爱的宝贝！',
+  '超爱小莹神！','小莹神无敌！','全宇宙最棒的小莹神！',
+  '小莹神好漂亮呀～','小莹神你太优秀了！','小莹神是宝藏女孩！',
+  '❤️ 小莹神 ❤️','小莹神666！','小莹神永远最棒！',
+  '为小莹神鼓掌！👏','小莹神赛高！','小莹神今天也超可爱！',
+  '✨小莹神是最闪亮的星✨','为小莹神打call！！！','小莹神yyds！',
+  '爱死小莹神了！','小莹神永远幸福！','小莹神加油💪',
+  '夸夸小莹神！','小莹神世界第一可爱！','小莹神棒棒棒！',
+  '小莹神我爱你！💕','小莹神好厉害哦！','小莹神是公主！👑',
+  '给小莹神比心！🫶','小莹神最闪亮！','小莹神美美的！',
+  '小莹神是天上的星星！','小莹神开心每一天！','小莹神好温柔！',
+  '小莹神最最最棒！','爱小莹神❤️‍🔥','小莹神超可爱！', '66超爱小莹神', '好想你好想你', '小莹神最美',
+];
+const DM_COLORS = [
+  '#ff69b4','#ff6b6b','#ffd700','#00fff0','#ff9f43',
+  '#a29bfe','#fd79a8','#55efc4','#ff4081','#e040fb',
+  '#40c4ff','#69f0ae','#ffcc02','#ff5252',
+];
+
+let dmActive = false;   // gate to stop danmaku on restart
+
+function stopDanmaku() {
+  dmActive = false;
+  document.getElementById('dm-layer').innerHTML = '';
+}
+
+function fireDanmaku(total) {
+  dmActive = true;
+  const layer = document.getElementById('dm-layer');
+  let count = 0;
+
+  function spawn() {
+    if (!dmActive || count >= total) return;
+    count++;
+    const msg   = DM_MSGS[ri(DM_MSGS.length)];
+    const color = DM_COLORS[ri(DM_COLORS.length)];
+    const size  = ri(17) + 13;
+    const top   = (Math.random() * 89).toFixed(1);
+    // Slower: 7 – 14 seconds per item
+    const dur   = (Math.random() * 7 + 7).toFixed(2);
+    const delay = (Math.random() * 0.4).toFixed(2);
+
+    const el = document.createElement('div');
+    el.className = 'dm';
+    el.textContent = msg;
+    el.style.cssText = [
+      `top:${top}%`,
+      `color:${color}`,
+      `font-size:${size}px`,
+      `text-shadow:0 0 12px ${color},1px 1px 4px #000`,
+      `animation-duration:${dur}s`,
+      `animation-delay:${delay}s`,
+    ].join(';');
+
+    layer.appendChild(el);
+    setTimeout(() => el.remove(), (parseFloat(dur) + parseFloat(delay) + 0.5) * 1000);
+    setTimeout(spawn, ri(180) + 80);
+  }
+
+  spawn();
+}
+
+/* ════════════════════════════════════
+   Boot
+════════════════════════════════════ */
+startGame();
+</script>
+</body>
+</html>
